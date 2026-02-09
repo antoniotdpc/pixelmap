@@ -46,7 +46,3 @@ flutter:
     - assets/images/
     - assets/fonts/
 
-  fonts:
-    - family: Minecraft
-      fonts:
-        - asset: assets/fonts/Minecraft-Regular.ttf
