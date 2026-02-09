@@ -1,0 +1,102 @@
+# This workflow periodically generates exploration reports for users
+
+{
+  "name": "Daily Report Generator",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 24
+            }
+          ]
+        }
+      },
+      "name": "Daily Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": "public",
+        "table": "users",
+        "limit": 100
+      },
+      "name": "Get Active Users",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": "public",
+        "table": "user_stats",
+        "where": {
+          "conditions": [
+            {
+              "column": "user_id",
+              "value": "={{ $json.id }}"
+            }
+          ]
+        }
+      },
+      "name": "Get User Stats",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const stats = $json;\nconst today = new Date();\nconst yesterday = new Date(today);\nyesterday.setDate(yesterday.getDate() - 1);\n\n// Generate daily report\nreturn {\n  user_id: stats.user_id,\n  report_date: today.toISOString(),\n  period: 'daily',\n  stats: {\n    total_distance: stats.total_distance_meters,\n    explored_tiles: stats.explored_tiles,\n    unique_locations: stats.unique_locations,\n    days_active: stats.days_active\n  },\n  summary: `Explored ${stats.explored_tiles} tiles and traveled ${(stats.total_distance_meters / 1000).toFixed(1)}km total.`\n};"
+      },
+      "name": "Generate Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [850, 300]
+    }
+  ],
+  "connections": {
+    "Daily Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Active Users",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Active Users": {
+      "main": [
+        [
+          {
+            "node": "Get User Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get User Stats": {
+      "main": [
+        [
+          {
+            "node": "Generate Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": ["pixelmap", "reports"]
+}

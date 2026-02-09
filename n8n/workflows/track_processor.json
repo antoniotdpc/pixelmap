@@ -1,0 +1,167 @@
+{
+  "name": "Track Processor",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 60
+            }
+          ]
+        }
+      },
+      "id": "trigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": "public",
+        "table": "track_segments",
+        "where": {
+          "conditions": [
+            {
+              "column": "processed",
+              "value": "false",
+              "condition": "equal"
+            }
+          ]
+        },
+        "limit": 100
+      },
+      "id": "get-tracks",
+      "name": "Get Unprocessed Tracks",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const tracks = $json;\nconst results = [];\n\nfor (const track of tracks) {\n  // Parse the track geometry\n  const geom = track.geom;\n  \n  // Calculate bounding box\n  // This is a simplified version - actual implementation would parse WKB\n  const bbox = {\n    min_lat: track.min_lat || 0,\n    max_lat: track.max_lat || 0,\n    min_lng: track.min_lng || 0,\n    max_lng: track.max_lng || 0\n  };\n  \n  // Calculate tiles covered by this track\n  const zoomLevels = [0, 1, 2, 3, 4];\n  const tiles = [];\n  \n  for (const zoom of zoomLevels) {\n    const n = Math.pow(2, zoom);\n    const minX = Math.floor((bbox.min_lng + 180) / 360 * n);\n    const maxX = Math.floor((bbox.max_lng + 180) / 360 * n);\n    const minY = Math.floor(\n      (1 - Math.log(Math.tan(bbox.max_lat * Math.PI / 180) + 1 / Math.cos(bbox.max_lat * Math.PI / 180)) / Math.PI) / 2 * n\n    );\n    const maxY = Math.floor(\n      (1 - Math.log(Math.tan(bbox.min_lat * Math.PI / 180) + 1 / Math.cos(bbox.min_lat * Math.PI / 180)) / Math.PI) / 2 * n\n    );\n    \n    for (let x = minX; x <= maxX; x++) {\n      for (let y = minY; y <= maxY; y++) {\n        tiles.push({\n          user_id: track.user_id,\n          tile_key: `${zoom}/${x}/${y}`,\n          zoom_level: zoom,\n          track_id: track.id\n        });\n      }\n    }\n  }\n  \n  results.push({\n    track_id: track.id,\n    user_id: track.user_id,\n    tiles: tiles,\n    point_count: track.point_count,\n    distance_meters: track.distance_meters\n  });\n}\n\nreturn results;"
+      },
+      "id": "process-tracks",
+      "name": "Process Tracks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "schema": "public",
+        "table": "explored_areas",
+        "options": {},
+        "columns": {
+          "mapping": [
+            {
+              "column": "user_id",
+              "value": "={{ $json.user_id }}"
+            },
+            {
+              "column": "tile_key",
+              "value": "={{ $json.tile_key }}"
+            },
+            {
+              "column": "zoom_level",
+              "value": "={{ $json.zoom_level }}"
+            },
+            {
+              "column": "explored_at",
+              "value": "={{ $now }}"
+            }
+          ]
+        }
+      },
+      "id": "save-areas",
+      "name": "Batch Save Areas",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "schema": "public",
+        "table": "track_segments",
+        "where": {
+          "conditions": [
+            {
+              "column": "id",
+              "value": "={{ $json.track_id }}",
+              "condition": "equal"
+            }
+          ]
+        },
+        "columns": {
+          "mapping": [
+            {
+              "column": "processed",
+              "value": "true"
+            }
+          ]
+        }
+      },
+      "id": "mark-processed",
+      "name": "Mark Processed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [1050, 300]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Unprocessed Tracks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Unprocessed Tracks": {
+      "main": [
+        [
+          {
+            "node": "Process Tracks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Tracks": {
+      "main": [
+        [
+          {
+            "node": "Batch Save Areas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batch Save Areas": {
+      "main": [
+        [
+          {
+            "node": "Mark Processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": ["pixelmap", "tracks"],
+  "description": "Processes batch-uploaded GPS tracks and updates fog of war"
+}

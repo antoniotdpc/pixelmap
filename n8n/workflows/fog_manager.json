@@ -1,0 +1,155 @@
+{
+  "name": "Fog of War Manager",
+  "nodes": [
+    {
+      "parameters": {
+        "events": ["INSERT"],
+        "schema": "public",
+        "tableName": "user_locations"
+      },
+      "id": "trigger",
+      "name": "Location Insert Trigger",
+      "type": "n8n-nodes-base.postgresTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": "public",
+        "table": "user_locations",
+        "where": {
+          "conditions": [
+            {
+              "column": "user_id",
+              "value": "={{ $json.user_id }}",
+              "condition": "equal"
+            }
+          ]
+        },
+        "limit": 50,
+        "sort": {
+          "sorting": [
+            {
+              "direction": "DESC",
+              "column": "recorded_at"
+            }
+          ]
+        }
+      },
+      "id": "get-recent",
+      "name": "Get Recent Locations",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const locations = $json;\nif (locations.length === 0) return [];\n\nconst userId = locations[0].user_id;\n\n// Get user settings for fog radius\nconst settings = await $getAll('user_settings', {\n  where: { user_id: userId }\n});\n\nconst radius = settings[0]?.fog_reveal_radius || 50;\n\n// Calculate explored tiles for each zoom level\nconst zoomLevels = [0, 1, 2, 3, 4];\nconst updates = [];\n\nfor (const zoom of zoomLevels) {\n  const tileSize = 256 * Math.pow(2, 18 - zoom); // Approximate meters per tile\n  const radiusInTiles = Math.ceil(radius / (tileSize / 256));\n  \n  for (const loc of locations) {\n    const tileX = Math.floor((loc.longitude + 180) / 360 * Math.pow(2, zoom));\n    const tileY = Math.floor(\n      (1 - Math.log(Math.tan(loc.latitude * Math.PI / 180) + 1 / Math.cos(loc.latitude * Math.PI / 180)) / Math.PI) / 2 * Math.pow(2, zoom)\n    );\n    \n    // Mark surrounding tiles as explored\n    for (let dx = -radiusInTiles; dx <= radiusInTiles; dx++) {\n      for (let dy = -radiusInTiles; dy <= radiusInTiles; dy++) {\n        const key = `${zoom}/${tileX + dx}/${tileY + dy}`;\n        updates.push({\n          user_id: userId,\n          tile_key: key,\n          zoom_level: zoom,\n          center_lat: loc.latitude,\n          center_lng: loc.longitude,\n          accuracy: loc.accuracy\n        });\n      }\n    }\n  }\n}\n\nreturn updates;"
+      },
+      "id": "calculate-fog",
+      "name": "Calculate Fog Updates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "schema": "public",
+        "table": "explored_areas",
+        "options": {},
+        "columns": {
+          "mapping": [
+            {
+              "column": "user_id",
+              "value": "={{ $json.user_id }}"
+            },
+            {
+              "column": "tile_key",
+              "value": "={{ $json.tile_key }}"
+            },
+            {
+              "column": "zoom_level",
+              "value": "={{ $json.zoom_level }}"
+            },
+            {
+              "column": "explored_at",
+              "value": "={{ $now }}"
+            },
+            {
+              "column": "accuracy",
+              "value": "={{ $json.accuracy }}"
+            }
+          ]
+        }
+      },
+      "id": "save-explored",
+      "name": "Save Explored Areas",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Update user stats\nconst userId = $json[0].user_id;\n\n// Count explored tiles\nconst exploredCount = await $executeQuery(\n  `SELECT COUNT(*) as count FROM explored_areas WHERE user_id = '${userId}'`\n);\n\n// Update stats\nawait $executeQuery(\n  `UPDATE user_stats SET \n    explored_tiles = ${exploredCount[0].count},\n    last_explored_at = NOW(),\n    updated_at = NOW()\n   WHERE user_id = '${userId}'`\n);\n\nreturn { success: true, user_id: userId, explored_tiles: exploredCount[0].count };"
+      },
+      "id": "update-stats",
+      "name": "Update User Stats",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1050, 300]
+    }
+  ],
+  "connections": {
+    "Location Insert Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Recent Locations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Recent Locations": {
+      "main": [
+        [
+          {
+            "node": "Calculate Fog Updates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Fog Updates": {
+      "main": [
+        [
+          {
+            "node": "Save Explored Areas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Explored Areas": {
+      "main": [
+        [
+          {
+            "node": "Update User Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": ["pixelmap", "fog-of-war"],
+  "description": "Manages fog of war revelation based on user locations"
+}

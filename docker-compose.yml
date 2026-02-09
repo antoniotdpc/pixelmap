@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  # Supabase local development
+  supabase:
+    image: supabase/supabase-local:latest
+    ports:
+      - "54321:54321"  # Kong
+      - "54322:54322"  # Supabase Studio
+      - "54323:54323"  # Postgres
+    environment:
+      POSTGRES_PASSWORD: postgres
+      JWT_SECRET: super-secret-jwt-token
+      ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+      SERVICE_ROLE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+    volumes:
+      - ./supabase/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+
+  # n8n for agent workflows
+  n8n:
+    image: n8nio/n8n:latest
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=password
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - WEBHOOK_URL=http://localhost:5678/
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/workflows
+
+  # Redis for caching
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  # Tile processing worker
+  tile-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    environment:
+      - SUPABASE_URL=http://supabase:54321
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - supabase
+      - redis
+    volumes:
+      - ./worker:/app
+
+volumes:
+  n8n_data:
+  redis_data:
+  postgres_data:

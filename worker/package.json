@@ -1,0 +1,20 @@
+{
+  "name": "pixelmap-tile-worker",
+  "version": "1.0.0",
+  "description": "Tile processing worker for PixelMap",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "sharp": "^0.32.6",
+    "axios": "^1.6.0",
+    "@supabase/supabase-js": "^2.38.0",
+    "redis": "^4.6.0",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}

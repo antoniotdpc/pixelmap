@@ -1,0 +1,128 @@
+{
+  "name": "Tile Pixelation Processor",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "webhookId": "tile-processor"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.body.tile_url }}",
+        "responseFormat": "file",
+        "options": {}
+      },
+      "id": "fetch-tile",
+      "name": "Fetch OSM Tile",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const sharp = require('sharp');\nconst tileData = $json.data;\n\n// Pixelation levels based on zoom\nconst pixelationConfig = {\n  0: 1,      // No pixelation\n  1: 2,      // Light\n  2: 4,      // Medium\n  3: 8,      // Heavy\n  4: 16      // Very heavy\n};\n\nconst zoom = $json.body.zoom_level || 2;\nconst pixelSize = pixelationConfig[zoom] || 4;\n\n// Process image with pixelation\nconst processed = await sharp(tileData)\n  .resize(256 / pixelSize, 256 / pixelSize, {\n    kernel: sharp.kernel.nearest\n  })\n  .resize(256, 256, {\n    kernel: sharp.kernel.nearest\n  })\n  .modulate({\n    brightness: 0.9,\n    saturation: 0.8\n  })\n  .toBuffer();\n\nreturn {\n  processed_tile: processed.toString('base64'),\n  tile_key: $json.body.tile_key,\n  zoom_level: zoom\n};"
+      },
+      "id": "pixelate",
+      "name": "Pixelate Image",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "schema": "public",
+        "table": "tile_cache",
+        "options": {},
+        "columns": {
+          "mapping": [
+            {
+              "column": "tile_key",
+              "value": "={{ $json.tile_key }}"
+            },
+            {
+              "column": "pixelated_data",
+              "value": "={{ $json.processed_tile }}"
+            },
+            {
+              "column": "processed_at",
+              "value": "={{ $now }}"
+            }
+          ]
+        }
+      },
+      "id": "save-tile",
+      "name": "Save to Cache",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, tile_key: $json.tile_key }) }}"
+      },
+      "id": "respond",
+      "name": "Respond to Client",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1050, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fetch OSM Tile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch OSM Tile": {
+      "main": [
+        [
+          {
+            "node": "Pixelate Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pixelate Image": {
+      "main": [
+        [
+          {
+            "node": "Save to Cache",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to Cache": {
+      "main": [
+        [
+          {
+            "node": "Respond to Client",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": ["pixelmap", "tiles"],
+  "description": "Processes OpenStreetMap tiles with Minecraft-style pixelation"
+}
